@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Briefing Room — ConnectFutures</title>
+<!--
+  ConnectFutures "Briefing Room" — custom monday.com board view for the Content & Evaluation Hub.
+  Classic (non-Vibe) app: host this single file on any HTTPS static host (GitHub Pages / Cloudflare Pages),
+  then in monday Developer Center create an app with a Board View feature pointing at the hosted URL,
+  install it on the account, and add the view to board 18415693546.
+  Uses monday SDK seamless auth — every user acts with their own monday permissions. No tokens, no AI.
+-->
+<script src="https://cdn.jsdelivr.net/npm/monday-sdk-js@0.5.5/dist/main.js"></script>
+<style>
+  :root {
+    --pink:#DE4F96; --orange:#F59E21; --purple:#54388C; --purple-dark:#3A2760;
+    --blue:#00B0D9; --green:#008F6E; --ink:#0F0C0C; --grey:#6B7280;
+    --bg:#F6F8FA; --card:#FFFFFF; --line:#E3E8EE; --amber-bg:#FFF4E0; --green-bg:#E7F6F0;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color:var(--ink); background:var(--bg); height:100vh; overflow:hidden; }
+  #app { display:flex; height:100vh; }
+
+  /* ---------- Left: task list ---------- */
+  #listPane { width:420px; min-width:320px; border-right:1px solid var(--line); background:var(--card); display:flex; flex-direction:column; }
+  #listHeader { padding:14px 16px 10px; border-bottom:1px solid var(--line); }
+  #listHeader h1 { font-size:17px; letter-spacing:.2px; }
+  #listHeader h1 span { color:var(--pink); }
+  #filters { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .chip { border:1px solid var(--line); border-radius:14px; padding:3px 10px; font-size:12px; cursor:pointer; background:#fff; color:var(--grey); user-select:none; }
+  .chip.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+  select.chip { appearance:auto; }
+  #tasks { flex:1; overflow-y:auto; padding:8px; }
+  .task { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:8px; cursor:pointer; background:#fff; transition:box-shadow .12s; }
+  .task:hover { box-shadow:0 2px 8px rgba(15,12,12,.10); }
+  .task.sel { border-color:var(--purple); box-shadow:0 0 0 2px rgba(84,56,140,.25); }
+  .task .tname { font-size:13.5px; font-weight:600; line-height:1.3; margin-bottom:6px; }
+  .trow { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .tag { font-size:10.5px; font-weight:700; letter-spacing:.3px; color:#fff; border-radius:4px; padding:2px 7px; white-space:nowrap; }
+  .pill { font-size:10.5px; font-weight:600; border-radius:4px; padding:2px 7px; color:#fff; white-space:nowrap; }
+  .due { font-size:11px; color:var(--grey); margin-left:auto; white-space:nowrap; }
+  .due.overdue { color:#D83A52; font-weight:700; }
+  .due.soon { color:#E07C00; font-weight:600; }
+  .avatars { display:flex; gap:2px; }
+  .av { width:20px; height:20px; border-radius:50%; background:var(--purple); color:#fff; font-size:9.5px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .secHead { font-size:11px; font-weight:700; color:var(--grey); text-transform:uppercase; letter-spacing:.8px; padding:10px 6px 4px; cursor:pointer; }
+  .secHead .n { color:var(--pink); }
+  #doneWrap.collapsed .task { display:none; }
+
+  /* ---------- Right: detail ---------- */
+  #detailPane { flex:1; overflow-y:auto; padding:22px 28px; }
+  #empty { color:var(--grey); text-align:center; margin-top:120px; font-size:14px; }
+  .dHead h2 { font-size:20px; line-height:1.3; margin-bottom:8px; }
+  .dMeta { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:14px; }
+  .card h3 { font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--grey); margin-bottom:10px; }
+  .brief { white-space:pre-wrap; font-size:14px; line-height:1.55; max-height:420px; overflow-y:auto; }
+  .brief.empty { color:var(--grey); font-style:italic; }
+  .btn { display:inline-block; border:none; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:600; cursor:pointer; color:#fff; background:var(--purple); margin-right:8px; margin-top:4px; text-decoration:none; }
+  .btn.blue { background:var(--blue); } .btn.grey { background:var(--grey); }
+  .btn:hover { filter:brightness(1.08); }
+  .statusSel { font-size:13px; padding:7px 10px; border-radius:8px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  .linkRow { display:flex; gap:8px; margin-top:6px; }
+  .linkRow input { flex:1; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font-size:13px; }
+  .hint { font-size:11.5px; color:var(--grey); margin-top:6px; }
+  .curLink { font-size:13px; margin-bottom:6px; word-break:break-all; }
+  .curLink a { color:var(--blue); }
+  .formOK { background:var(--green-bg); border-color:#BFE6D8; }
+  .formNone { background:var(--amber-bg); border-color:#F2DDB2; }
+  .qa { margin-bottom:10px; }
+  .qa .q { font-size:11.5px; font-weight:700; color:var(--purple); margin-bottom:2px; }
+  .qa .a { font-size:13.5px; white-space:pre-wrap; line-height:1.45; }
+  .okBadge { font-weight:700; color:var(--green); font-size:13px; }
+  .warnBadge { font-weight:700; color:#B45309; font-size:13px; }
+  #loader { position:fixed; inset:0; background:rgba(246,248,250,.92); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:50; font-size:14px; color:var(--grey); }
+  .spin { width:34px; height:34px; border:4px solid var(--line); border-top-color:var(--pink); border-radius:50%; animation:sp 0.9s linear infinite; margin-bottom:12px; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  .toast { position:fixed; bottom:18px; right:18px; background:var(--ink); color:#fff; padding:10px 16px; border-radius:8px; font-size:13px; z-index:60; opacity:0; transition:opacity .2s; }
+  .toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<div id="loader"><div class="spin"></div><div id="loadMsg">Loading tasks…</div></div>
+<div id="app">
+  <div id="listPane">
+    <div id="listHeader">
+      <h1>Briefing <span>Room</span></h1>
+      <div id="filters">
+        <span class="chip" id="fMine">My tasks</span>
+        <select class="chip" id="fType"><option value="">All types</option></select>
+        <select class="chip" id="fStatus"><option value="">All statuses</option></select>
+      </div>
+    </div>
+    <div id="tasks"></div>
+  </div>
+  <div id="detailPane"><div id="empty">Select a task to see its brief and details.</div></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const monday = window.mondaySdk();
+/* no setApiVersion — use monday's current default so the app never breaks when old API versions are retired */
+
+/* ---------- ConnectFutures board & column IDs ---------- */
+const B = { content:"18415693546", logistics:"18415693404", contracts:"18415693604", sales:"18415692603", form:"18426755096" };
+const C = {
+  status:"color_mm3x9pmg", report:"color_mm4dj3rh", people:"multiple_person_mm3xyspp",
+  dContract:"lookup_mm76smmx", dBespoke:"lookup_mm7avg7r",
+  briefSales:"lookup_mm5ymf6e", briefBespoke:"lookup_mm7amfk6", briefProg:"lookup_mm7a1rep",
+  slidesBespoke:"lookup_mm7aeww8", slidesProg:"lookup_mm761ds6", overviewMirror:"lookup_mm4jgpym",
+  linkLogistics:"board_relation_mm7ahc6c", linkContracts:"board_relation_mm4dqtwr", linkSales:"board_relation_mm4j1gwp"
+};
+const LOG = { folder:"text_mm4jj6mq", saleLink:"board_relation_mm4dqfpj" };
+const CON = { folder:"text_mm6ct4ne", codeMirror:"lookup_mm57ac9y", type:"dropdown_mm57a3s8" };
+const SAL = { type:"dropdown_mm3xc0c9", overview:"link_mm4jpjpr", org:"text_mm5fk4mm" };
+const FRM = { link:"board_relation_mm7azqqx", fields:[
+  ["Your organisation","long_text6ipg54pn"],
+  ["What is the subject matter?","long_texttipwylof"],
+  ["What is the audience?","long_textnvy4tavz"],
+  ["Approximate audience size per session","numberyqjjs4bx"],
+  ["Online or in person?","single_selectmuklg8k"],
+  ["What made you interested in this topic?","long_textgp514yb9"],
+  ["What do you hope the training will achieve?","long_textblekfps4"],
+  ["Examples of how this issue takes form in your setting","long_text8ozihvmz"],
+  ["How many sessions?","numberwi900rn5"],
+  ["Session length","short_textuuwz3a92"],
+  ["Same audience across sessions?","long_textkqoyi0rf"],
+  ["Additional resources requested","long_text6gvrjjqa"],
+  ["Other notes","long_textfecnlx8n"]
+]};
+const ACCOUNT_URL = "https://connectfutures.monday.com";
+const TYPE_COLORS = {
+  "Programme (Workshop)":"var(--purple)", "Programme (Multi-disciplinary)":"var(--purple-dark)",
+  "Bespoke":"var(--pink)", "Off-the-shelf":"var(--blue)", "Youth":"var(--green)", "TTT":"var(--orange)"
+};
+
+/* ---------- state ---------- */
+let tasks = [], selId = null, meId = null;
+let statusLabels = [], reportLabels = [], statusColors = {}, reportColors = {};
+let refItems = {};        // id -> {boardId, name, cols:{}}  (linked sales/contracts/deliveries)
+let forms = [];           // form board items
+let boardsIndex = [];     // {id,name} for programme-board lookup
+let filt = { mine:false, type:"", status:"" };
+
+const $ = id => document.getElementById(id);
+const esc = s => (s??"").toString().replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+function toast(msg, ms=2600){ const t=$("toast"); t.textContent=msg; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"), ms); }
+async function api(query, variables){ const r = await monday.api(query, {variables}); if(r.errors){ console.error(r.errors); throw new Error(r.errors.map(e=>e.message||e).join("; ")); } return r.data; }
+
+const isReport = t => /^evaluation\s*&\s*reporting/i.test(t.name);
+const isPopulate = t => /populate programme board/i.test(t.name);
+
+/* de-duplicate a mirror aggregation that repeats the same block joined by ", " */
+function dedupeBrief(s){
+  if(!s) return s;
+  const m = s.match(/^([\s\S]+?)(?:, \1)+$/);
+  return m ? m[1] : s;
+}
+
+function cv(item, id){ return (item.column_values||[]).find(c=>c.id===id) || {}; }
+function mirrorVal(item, id){ const c = cv(item,id); return (c.display_value ?? c.text ?? "").trim(); }
+function linkedIds(item, id){ const c = cv(item,id); return c.linked_item_ids || []; }
+
+/* ---------- load ---------- */
+async function loadAll(){
+  try{
+    $("loadMsg").textContent = "Loading tasks…";
+    const ctx = await monday.get("context");
+    meId = String(ctx?.data?.user?.id || "");
+
+    // status label options + colours
+    const meta = await api(`query { boards(ids:[${B.content}]) { columns(ids:["${C.status}","${C.report}"]) { id settings_str } } }`);
+    for(const col of meta.boards[0].columns){
+      const st = JSON.parse(col.settings_str||"{}");
+      const labels = Object.entries(st.labels||{}).map(([k,v])=>({id:k,label:v,idx:(st.labels_positions_v2||{})[k]??0,color:((st.labels_colors||{})[k]||{}).color||"#666"}))
+        .filter(l=>l.label).sort((a,b)=>a.idx-b.idx);
+      if(col.id===C.status){ statusLabels = labels.map(l=>l.label); labels.forEach(l=>statusColors[l.label]=l.color); }
+      else { reportLabels = labels.map(l=>l.label); labels.forEach(l=>reportColors[l.label]=l.color); }
+    }
+
+    // content tasks (paginated)
+    const colIds = Object.values(C).map(x=>`"${x}"`).join(",");
+    tasks = []; let cursor = null;
+    do{
+      const page = cursor
+        ? await api(`query { next_items_page(cursor:"${cursor}", limit:100) { cursor items { id name column_values(ids:[${colIds}]) { id text ... on MirrorValue { display_value } ... on BoardRelationValue { linked_item_ids } ... on StatusValue { label } ... on PeopleValue { persons_and_teams { id kind } } } } } }`).then(d=>d.next_items_page)
+        : await api(`query { boards(ids:[${B.content}]) { items_page(limit:100) { cursor items { id name column_values(ids:[${colIds}]) { id text ... on MirrorValue { display_value } ... on BoardRelationValue { linked_item_ids } ... on StatusValue { label } ... on PeopleValue { persons_and_teams { id kind } } } } } } }`).then(d=>d.boards[0].items_page);
+      tasks.push(...page.items); cursor = page.cursor;
+    } while(cursor && tasks.length < 2000);
+
+    // batch-fetch linked reference items (sales, contracts, deliveries)
+    $("loadMsg").textContent = "Resolving links…";
+    const wanted = new Set();
+    tasks.forEach(t=>{ [C.linkLogistics,C.linkContracts,C.linkSales].forEach(k=>linkedIds(t,k).forEach(i=>wanted.add(i))); });
+    await fetchRefs([...wanted]);
+    // second hop: deliveries -> their sales
+    const hop2 = new Set();
+    Object.values(refItems).forEach(r=>{ if(r.boardId===B.logistics) (r.saleIds||[]).forEach(i=>{ if(!refItems[i]) hop2.add(i); }); });
+    if(hop2.size) await fetchRefs([...hop2]);
+
+    // form board
+    const fcols = [FRM.link, ...FRM.fields.map(f=>f[1])].map(x=>`"${x}"`).join(",");
+    const fd = await api(`query { boards(ids:[${B.form}]) { items_page(limit:200) { items { id name column_values(ids:[${fcols}]) { id text ... on BoardRelationValue { linked_item_ids } ... on StatusValue { label } } } } } }`);
+    forms = fd.boards[0].items_page.items;
+
+    // boards index (for programme-board buttons)
+    const bd = await api(`query { boards(limit:400, order_by:created_at) { id name } }`);
+    boardsIndex = bd.boards.filter(b=>!/^Subitems of /.test(b.name));
+
+    buildFilters(); renderList();
+    $("loader").style.display = "none";
+  } catch(e){
+    $("loader").innerHTML = `<div style="max-width:420px;text-align:center;color:#B45309"><b>Couldn't load the board.</b><br><span style="font-size:12.5px">${esc(e.message||e)}</span><br><br><button class="btn" onclick="location.reload()">Retry</button></div>`;
+  }
+}
+
+async function fetchRefs(ids){
+  for(let i=0;i<ids.length;i+=100){
+    const chunk = ids.slice(i,i+100);
+    const d = await api(`query { items(ids:[${chunk.join(",")}]) { id name board { id } column_values(ids:["${SAL.type}","${SAL.overview}","${SAL.org}","${CON.type}","${CON.codeMirror}","${CON.folder}","${LOG.folder}","${LOG.saleLink}"]) { id text ... on MirrorValue { display_value } ... on BoardRelationValue { linked_item_ids } } } }`);
+    for(const it of d.items){
+      const r = { boardId: it.board.id, name: it.name, cols:{} };
+      for(const c of it.column_values) r.cols[c.id] = { text:c.text, dv:c.display_value, ids:c.linked_item_ids };
+      if(r.boardId===B.logistics) r.saleIds = (r.cols[LOG.saleLink]?.ids)||[];
+      refItems[it.id] = r;
+    }
+  }
+}
+
+/* ---------- derivations ---------- */
+function deliveryType(t){
+  const saleIds = linkedIds(t,C.linkSales), conIds = linkedIds(t,C.linkContracts), logIds = linkedIds(t,C.linkLogistics);
+  for(const id of saleIds){ const s=refItems[id]; const v=s?.cols[SAL.type]?.text; if(v) return v.split(",")[0].trim(); }
+  for(const id of conIds){ const c=refItems[id]; const v=c?.cols[CON.type]?.text; if(v) return v.split(",")[0].trim(); }
+  for(const id of logIds){ const dl=refItems[id]; for(const sid of (dl?.saleIds||[])){ const s=refItems[sid]; const v=s?.cols[SAL.type]?.text; if(v) return v.split(",")[0].trim(); } }
+  return "";
+}
+function deadline(t){
+  const v = mirrorVal(t,C.dContract) || mirrorVal(t,C.dBespoke).split(",")[0].trim();
+  return v || "";
+}
+function fmtDate(iso){ if(!iso) return ""; const m=iso.match(/(\d{4})-(\d{2})-(\d{2})/); return m?`${m[3]}/${m[2]}/${m[1]}`:iso; }
+function dueClass(iso){ if(!iso) return ""; const d=new Date(iso+"T12:00:00"), now=new Date(); const diff=(d-now)/864e5; return diff<0?"overdue":(diff<7?"soon":""); }
+function brief(t){ return dedupeBrief(mirrorVal(t,C.briefSales) || mirrorVal(t,C.briefBespoke) || mirrorVal(t,C.briefProg)); }
+function statusOf(t){ return isReport(t) ? (cv(t,C.report).label||cv(t,C.report).text||"") : (cv(t,C.status).label||cv(t,C.status).text||""); }
+function isDone(t){ return statusOf(t)==="Done"; }
+function assigneeNames(t){ return (cv(t,C.people).text||"").split(",").map(s=>s.trim()).filter(Boolean); }
+function mineMatch(t){ return (cv(t,C.people).persons_and_teams||[]).some(p=>String(p.id)===meId); }
+function formFor(t){ return forms.find(f=> linkedIds(f,FRM.link).includes(t.id) || (f.column_values||[]).some(c=>c.id===FRM.link && (c.linked_item_ids||[]).includes(t.id)) ); }
+function contractOf(t){ const id = linkedIds(t,C.linkContracts)[0]; return id?{id, ...refItems[id]}:null; }
+function programmeBoard(t){
+  const con = contractOf(t); if(!con) return null;
+  const code = (con.cols?.[CON.codeMirror]?.dv || con.cols?.[CON.codeMirror]?.text || "").trim();
+  let b = null;
+  if(code) b = boardsIndex.find(x=>x.name.toLowerCase().startsWith(code.toLowerCase()+" -")) || boardsIndex.find(x=>x.name.toLowerCase().includes(code.toLowerCase()));
+  if(!b && con.name) b = boardsIndex.find(x=>x.name.toLowerCase().includes(con.name.toLowerCase()));
+  return b;
+}
+
+/* ---------- list ---------- */
+function buildFilters(){
+  const types = [...new Set(tasks.map(deliveryType).filter(Boolean))].sort();
+  $("fType").innerHTML = `<option value="">All types</option>` + types.map(t=>`<option>${esc(t)}</option>`).join("");
+  const sts = [...new Set(tasks.map(statusOf).filter(Boolean))];
+  $("fStatus").innerHTML = `<option value="">All statuses</option>` + sts.map(s=>`<option>${esc(s)}</option>`).join("");
+  $("fMine").onclick = ()=>{ filt.mine=!filt.mine; $("fMine").classList.toggle("on",filt.mine); renderList(); };
+  $("fType").onchange = e=>{ filt.type=e.target.value; renderList(); };
+  $("fStatus").onchange = e=>{ filt.status=e.target.value; renderList(); };
+}
+function taskCard(t){
+  const ty = deliveryType(t), dl = deadline(t), st = statusOf(t);
+  const stCol = (isReport(t)?reportColors:statusColors)[st] || "#9AA0A6";
+  const avs = assigneeNames(t).slice(0,3).map(n=>`<span class="av" title="${esc(n)}">${esc(n.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase())}</span>`).join("");
+  return `<div class="task ${t.id===selId?'sel':''}" onclick="selectTask('${t.id}')">
+    <div class="tname">${esc(t.name)}</div>
+    <div class="trow">
+      ${ty?`<span class="tag" style="background:${TYPE_COLORS[ty]||'#9AA0A6'}">${esc(ty)}</span>`:""}
+      ${st?`<span class="pill" style="background:${stCol}">${esc(st)}</span>`:""}
+      <span class="avatars">${avs}</span>
+      <span class="due ${dueClass(dl)}">${dl?fmtDate(dl):""}</span>
+    </div></div>`;
+}
+function renderList(){
+  const vis = tasks.filter(t=>{
+    if(filt.mine && !mineMatch(t)) return false;
+    if(filt.type && deliveryType(t)!==filt.type) return false;
+    if(filt.status && statusOf(t)!==filt.status) return false;
+    return true;
+  });
+  const open = vis.filter(t=>!isDone(t)).sort((a,b)=>((deadline(a)||"9999"))<((deadline(b)||"9999"))?-1:1);
+  const done = vis.filter(isDone);
+  let html = open.map(taskCard).join("") || `<div style="color:var(--grey);font-size:13px;padding:14px">No open tasks match.</div>`;
+  if(done.length){
+    html += `<div id="doneWrap" class="collapsed"><div class="secHead" onclick="this.parentElement.classList.toggle('collapsed')">Done <span class="n">(${done.length})</span> — click to show/hide</div>${done.map(taskCard).join("")}</div>`;
+  }
+  $("tasks").innerHTML = html;
+}
+
+/* ---------- detail ---------- */
+window.selectTask = function(id){ selId = id; renderList(); renderDetail(); };
+function renderDetail(){
+  const t = tasks.find(x=>x.id===selId); if(!t){ $("detailPane").innerHTML = `<div id="empty">Select a task.</div>`; return; }
+  const ty = deliveryType(t), dl = deadline(t), report = isReport(t), populate = isPopulate(t);
+  const labels = report?reportLabels:statusLabels, curSt = statusOf(t);
+  const b = brief(t);
+
+  /* status control */
+  const stSel = `<select class="statusSel" onchange="setStatus('${t.id}', this.value)">
+    ${!labels.includes(curSt)?`<option selected value="">${curSt?esc(curSt):"— set status —"}</option>`:""}
+    ${labels.map(l=>`<option ${l===curSt?"selected":""}>${esc(l)}</option>`).join("")}</select>
+    <span class="hint">${report?"Report status — mark Done when the report is complete":"Task status"}</span>`;
+
+  /* open-in-monday buttons */
+  let btns = "";
+  const con = contractOf(t), logId = linkedIds(t,C.linkLogistics)[0], saleId = linkedIds(t,C.linkSales)[0];
+  if(populate){
+    const pb = programmeBoard(t);
+    if(pb) btns += `<a class="btn" href="${ACCOUNT_URL}/boards/${pb.id}" target="_blank">Open programme board ↗</a>`;
+    if(con) btns += `<a class="btn blue" href="${ACCOUNT_URL}/boards/${B.contracts}/pulses/${con.id}" target="_blank">Open contract ↗</a>`;
+    if(!pb && !con) btns += `<span class="hint">No programme board or contract found yet.</span>`;
+  } else if(report || (con && !logId)){
+    if(con) btns += `<a class="btn" href="${ACCOUNT_URL}/boards/${B.contracts}/pulses/${con.id}" target="_blank">Open contract ↗</a>`;
+  }
+  if(!populate && logId) btns += `<a class="btn" href="${ACCOUNT_URL}/boards/${B.logistics}/pulses/${logId}" target="_blank">Open delivery ↗</a>`;
+  if(!populate && !logId && !con && saleId) btns += `<a class="btn" href="${ACCOUNT_URL}/boards/${B.sales}/pulses/${saleId}" target="_blank">Open sale ↗</a>`;
+
+  /* context-aware link input (not for populate/report tasks) */
+  let linkCard = "";
+  if(!populate && !report){
+    let label="", cur="", saveFn="";
+    if(logId){ label="Session folder link"; cur=mirrorVal(t,C.slidesBespoke); saveFn=`saveLink('${t.id}','logistics')`; }
+    else if(con){ label="Slides folder link"; cur=mirrorVal(t,C.slidesProg); saveFn=`saveLink('${t.id}','contract')`; }
+    else if(saleId){ label="Workshop overview link"; cur=mirrorVal(t,C.overviewMirror); saveFn=`saveLink('${t.id}','sale')`; }
+    if(label){
+      linkCard = `<div class="card"><h3>${label}</h3>
+        ${cur?`<div class="curLink">Current: <a href="${esc(cur.split(",")[0].trim())}" target="_blank">${esc(cur.split(",")[0].trim())}</a></div>`:`<div class="hint" style="margin-bottom:6px">Nothing saved yet.</div>`}
+        <div class="linkRow"><input id="linkInput" type="url" placeholder="Paste the Google Drive link…" value=""><button class="btn" onclick="${saveFn}">Save</button></div>
+        <div class="hint">${logId?"Saves to the delivery on the Logistics Hub (feeds the calendar invite).":con?"Saves to the contract — every delivery in the programme sees it.":"Saves to the sale's workshop overview link."}</div>
+      </div>`;
+    }
+  }
+
+  /* bespoke form section */
+  let formCard = "";
+  const f = formFor(t);
+  if(f){
+    const qa = FRM.fields.map(([q,id])=>{ const c=cv(f,id); const v=(c.label||c.text||"").trim(); return v?`<div class="qa"><div class="q">${esc(q)}</div><div class="a">${esc(v)}</div></div>`:""; }).join("");
+    formCard = `<div class="card formOK"><h3>Bespoke content form</h3><div class="okBadge">✓ Form completed — ${esc(f.name)}</div><div style="margin-top:10px">${qa||'<span class="hint">Form linked but empty.</span>'}</div></div>`;
+  } else if(ty==="Bespoke" || (!populate && mirrorVal(t,C.briefBespoke))){
+    const orgGuess = (saleId && refItems[saleId]?.cols[SAL.org]?.text || "").toLowerCase();
+    const cand = forms.find(fm=>{ if(linkedIds(fm,FRM.link).length) return false;
+      const org=(cv(fm,FRM.fields[0][1]).text||"").toLowerCase(), nm=fm.name.toLowerCase(), tn=t.name.toLowerCase();
+      return (org && (tn.includes(org)||org.includes(orgGuess&&orgGuess.length>3?orgGuess:" "))) || (nm.length>4 && tn.includes(nm)); });
+    formCard = `<div class="card formNone"><h3>Bespoke content form</h3><div class="warnBadge">⚠ No bespoke form filled in yet</div>
+      ${cand?`<div class="hint" style="margin-top:6px">Possible match: <b>${esc(cand.name)}</b> — <a href="${ACCOUNT_URL}/boards/${B.form}" target="_blank">link it on the Bespoke content form board ↗</a></div>`
+             :`<div class="hint" style="margin-top:6px">The coordinator fills this in during the bespoking call. <a href="${ACCOUNT_URL}/boards/${B.form}" target="_blank">Open the form board ↗</a></div>`}
+    </div>`;
+  }
+
+  $("detailPane").innerHTML = `
+    <div class="dHead"><h2>${esc(t.name)}</h2>
+      <div class="dMeta">
+        ${ty?`<span class="tag" style="background:${TYPE_COLORS[ty]||'#9AA0A6'};font-size:11.5px">${esc(ty)}</span>`:""}
+        ${dl?`<span class="due ${dueClass(dl)}" style="font-size:13px;margin-left:0">Deadline: ${fmtDate(dl)}</span>`:""}
+        <span style="font-size:13px;color:var(--grey)">${esc(assigneeNames(t).join(", "))}</span>
+      </div>
+      <div style="margin-bottom:14px">${stSel}</div>
+      <div style="margin-bottom:6px">${btns}</div>
+    </div>
+    <div class="card"><h3>Project brief</h3><div class="brief ${b?"":"empty"}">${b?esc(b):"No brief found — check the sale record."}</div></div>
+    ${formCard}
+    ${linkCard}`;
+}
+
+/* ---------- writes ---------- */
+window.setStatus = async function(taskId, label){
+  if(!label) return;
+  const t = tasks.find(x=>x.id===taskId); const colId = isReport(t)?C.report:C.status;
+  try{
+    await api(`mutation($v:String!){ change_simple_column_value(board_id:${B.content}, item_id:${taskId}, column_id:"${colId}", value:$v) { id } }`, {v:label});
+    const c = cv(t,colId); c.label = label; c.text = label;
+    toast("Status updated ✓"); renderList(); renderDetail();
+  }catch(e){ toast("Couldn't update status: "+e.message); }
+};
+window.saveLink = async function(taskId, kind){
+  const t = tasks.find(x=>x.id===taskId);
+  const url = ($("linkInput").value||"").trim();
+  if(!/^https?:\/\/.+\..+/.test(url)){ toast("That doesn't look like a link — paste the full URL."); return; }
+  try{
+    if(kind==="logistics"){
+      for(const dl of linkedIds(t,C.linkLogistics))
+        await api(`mutation($v:String!){ change_simple_column_value(board_id:${B.logistics}, item_id:${dl}, column_id:"${LOG.folder}", value:$v) { id } }`, {v:url});
+      cv(t,C.slidesBespoke).display_value = url;
+    } else if(kind==="contract"){
+      const con = contractOf(t);
+      await api(`mutation($v:String!){ change_simple_column_value(board_id:${B.contracts}, item_id:${con.id}, column_id:"${CON.folder}", value:$v) { id } }`, {v:url});
+      cv(t,C.slidesProg).display_value = url;
+    } else {
+      const saleId = linkedIds(t,C.linkSales)[0];
+      await api(`mutation($v:JSON!){ change_column_value(board_id:${B.sales}, item_id:${saleId}, column_id:"${SAL.overview}", value:$v) { id } }`, {v:JSON.stringify({url, text:url})});
+      cv(t,C.overviewMirror).display_value = url;
+    }
+    toast("Link saved ✓"); renderDetail();
+  }catch(e){ toast("Couldn't save: "+e.message); }
+};
+
+loadAll();
+</script>
+</body>
+</html>
